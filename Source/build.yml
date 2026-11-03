@@ -1,0 +1,59 @@
+name: Build Abyss Tone
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: Windows
+          - os: macos-latest
+            name: macOS
+          - os: ubuntu-22.04
+            name: Linux
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libjack-jackd2-dev libx11-dev libxrandr-dev \
+            libxinerama-dev libxcursor-dev libxext-dev libfreetype-dev libfontconfig1-dev \
+            libgl1-mesa-dev ninja-build
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 4 --target AbyssTone_All
+
+      - name: Collect artefacts
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp -R "build/AbyssTone_artefacts/Release/VST3" dist/ || cp -R build/AbyssTone_artefacts/VST3 dist/
+          cp -R "build/AbyssTone_artefacts/Release/Standalone" dist/ || cp -R build/AbyssTone_artefacts/Standalone dist/
+          if [ "$RUNNER_OS" == "macOS" ]; then cp -R "build/AbyssTone_artefacts/Release/AU" dist/; fi
+
+      # macOS: ad-hoc signature (required on Apple Silicon) + zip that keeps permissions/bundles intact
+      - name: Sign and pack (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          codesign --force --deep -s - "dist/VST3/Abyss Tone.vst3"
+          codesign --force --deep -s - "dist/AU/Abyss Tone.component"
+          codesign --force --deep -s - "dist/Standalone/Abyss Tone.app"
+          ditto -c -k --sequesterRsrc --keepParent dist AbyssTone-macOS.zip
+          rm -rf dist && mkdir dist && mv AbyssTone-macOS.zip dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AbyssTone-${{ matrix.name }}
+          path: dist
